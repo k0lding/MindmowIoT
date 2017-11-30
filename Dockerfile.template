@@ -1,3 +1,5 @@
+# First version from github.com/proffalken/Resin-GPS-NTP
+
 # Smallest base image
 FROM resin/%%RESIN_MACHINE_NAME%%-python
 
