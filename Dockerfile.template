@@ -4,7 +4,8 @@
 FROM resin/%%RESIN_MACHINE_NAME%%-python
 
 # Install GPSD etc
-RUN apt-get update && apt-get upgrade -y && apt-get install gpsd gpsd-clients ntp
+RUN apt-get update && apt-get upgrade -y && apt-get install gpsd gpsd-clients ntp 
+
 # Update the defaults
 RUN sed -i 's/DEVICES=""/DEVICES="\/dev\/ttyAMA0"/g' /etc/default/gpsd
 
