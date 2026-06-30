@@ -1,0 +1,73 @@
+ls
+sudo apt update
+sudo dnf update
+sudo dnf upgrade --refresh
+sudo dnf copr enable yalter/niri
+sudo dnf copr enable zhangyi6324/noctalia-shell
+sudo dnf install dnf-plugins-core
+sudo dnf install niri noctalia-git alacritty fuzzel xwayland-satellite
+sudo dnf install niri noctalia-shell alacritty fuzzel xwayland-satellite
+sudo dnf upgrade --refresh
+sudo dnf copr enable lionheartp/Hyprland
+sudo dnf install greetd noctalia-greeter
+sudo nano /etc/greetd/config.toml 
+sudo systemctl enable greetd.service --now
+ls -la
+ll
+ls -la
+ls .config/niri/config.kdl
+cat .config/niri/config.kdl
+nano .config/niri/config.kdl
+noctalia-greeter
+ls
+ls -la
+ls -la
+ll
+ls -la
+sudo dnf copr disable zhangyi6324/noctalia-shell
+sudo dnf enable yalter/xwayland-satelite
+sudo dnf copr enable -y yalter/xwayland-satelite
+sudo dnf copr enable yalter/xwayland-satelitte
+sudo dnf copr enable yalter/niri
+sudo dnf copr enable yalter/xwayland-satellite
+sudo dnf makecache
+sudo dnf remove noctalia-shell 2>/dev/null || true
+sudo dnf remove -y noctalia-shell 2>/dev/null || true
+sudo dnf install -y niri noctalia-git alacritty fuzzel xwayland-satellite
+niri --version
+noctalia --version
+xwayland-satellite --version
+xwayland-satellite -version
+sudo dnf install xdg-desktop-portal-gtk xdg-desktop-portal-gnome gnome-keyring polkit polkit-kde mate-polkit pipewire pipewire-pulseaudio wireplumber mako swaylock wl-clipboard google-noto-mono-fonts jetbrains-mono-fonts
+sudo localectl set-x11-keymap dk --no-convert
+niri-session 
+nano .config/niri/config.kdl 
+niri validate-config .config/niri/config.kdl 
+niri validate
+niri-session 
+reboot
+sudo dnf install greetd sudo dnf install greetd noctalia-greeter
+niri-session
+sudo noctalia-greeter-apply-appearance --setup-system
+noctalia-greeter-print-greetd-config 
+sudo nano /etc/greetd/config.toml 
+sudo systemctl enable --now greetd
+sudo nano /var/lib/noctalia-greeter/greeter.toml 
+reboot
+sudo systemctl is-enabled greetd
+sudo systemctl default 
+sudo systemctl enable greetd
+sudo systemctl default graphical.target
+sudo systemctl set-default graphical.target
+sudo systemctl default 
+sudo reboot
+sudo lshw -C network
+sudo apt install broadcom-sta-driver
+lspci -nn | grep network
+shutdown -now
+shutdown now
+hostnamectl
+sudo hostnamectl set-hostname L-PF1FDQYE
+hostnamectl
+sudo nano /etc/hosts
+shutdown now
