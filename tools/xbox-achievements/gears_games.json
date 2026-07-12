@@ -1,0 +1,53 @@
+[
+  {
+    "titleId": "1297287125",
+    "name": "Gears of War",
+    "endpoint": "x360"
+  },
+  {
+    "titleId": "1297287213",
+    "name": "Gears of War 2",
+    "endpoint": "x360"
+  },
+  {
+    "titleId": "1297287339",
+    "name": "Gears of War 3",
+    "endpoint": "x360"
+  },
+  {
+    "titleId": "1297287718",
+    "name": "Gears of War: Judgment",
+    "endpoint": "x360"
+  },
+  {
+    "titleId": "1475571605",
+    "name": "Gears of War: Ultimate Edition",
+    "endpoint": "modern"
+  },
+  {
+    "titleId": "552499398",
+    "name": "Gears of War 4",
+    "endpoint": "modern"
+  },
+  {
+    "titleId": "374923716",
+    "name": "Gears 5",
+    "endpoint": "modern"
+  },
+  {
+    "titleId": "1616046491",
+    "name": "Gears Tactics",
+    "endpoint": "modern"
+  },
+  {
+    "titleId": "1829869520",
+    "name": "Gears of War: Reloaded",
+    "endpoint": "modern"
+  },
+  {
+    "titleId": null,
+    "name": "Gears of War: E-Day",
+    "endpoint": "modern",
+    "envTitleId": "OPENXBL_EDAY_TITLE_ID"
+  }
+]
