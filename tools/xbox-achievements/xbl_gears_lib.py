@@ -17,10 +17,18 @@ GAMERTAG_MAPPING = ROOT / "gamertag-mapping.md"
 DATA_DIR = ROOT / "data"
 
 API_BASE = "https://xbl.io/api/v2"
-RATE_LIMIT_PER_HOUR = 150
-MIN_REQUEST_INTERVAL_SEC = 3600 / RATE_LIMIT_PER_HOUR
-LOW_REMAINING_THRESHOLD = 10
-LOW_REMAINING_SLEEP_SEC = 60
+RATE_LIMIT_PER_HOUR = int(os.environ.get("OPENXBL_RATE_LIMIT_PER_HOUR", "150"))
+MIN_REQUEST_INTERVAL_SEC = 3600 / max(RATE_LIMIT_PER_HOUR, 1)
+LOW_REMAINING_THRESHOLD = int(os.environ.get("OPENXBL_RATE_LIMIT_LOW_THRESHOLD", "15"))
+LOW_REMAINING_SLEEP_SEC = int(os.environ.get("OPENXBL_RATE_LIMIT_LOW_SLEEP_SEC", "30"))
+RATE_LIMIT_SAFETY_BUFFER = int(os.environ.get("OPENXBL_RATE_LIMIT_BUFFER", "3"))
+AUTO_WAIT_FOR_RESET = os.environ.get("OPENXBL_AUTO_WAIT", "1").strip().lower() not in (
+    "0",
+    "false",
+    "no",
+)
+MAX_RATE_LIMIT_WAIT_SEC = int(os.environ.get("OPENXBL_MAX_WAIT_SEC", "3700"))
+RATE_LIMIT_WAIT_BUFFER_SEC = 5
 
 PVP_KEYWORDS = (
     "multiplayer", "versus", " ranked", "team deathmatch", "king of the hill",
@@ -60,49 +68,140 @@ EXPECTED_TOTALS: dict[str, dict[str, int | str]] = {
 
 
 class HTTPError(Exception):
-    def __init__(self, url: str, code: int, body: str = "") -> None:
+    def __init__(
+        self,
+        url: str,
+        code: int,
+        body: str = "",
+        *,
+        retry_after: int | None = None,
+    ) -> None:
         self.url = url
         self.code = code
         self.body = body
+        self.retry_after = retry_after
         super().__init__(f"HTTP {code} for {url}")
 
 
 class RateLimitedClient:
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, *, auto_wait: bool | None = None) -> None:
         self.api_key = api_key
+        self.auto_wait = AUTO_WAIT_FOR_RESET if auto_wait is None else auto_wait
         self.requests_made = 0
+        self.rate_limit_waits = 0
+        self.rate_limit_wait_seconds = 0.0
         self.last_request_at = 0.0
+        self.rate_limit_limit: int | None = None
         self.rate_limit_remaining: int | None = None
+        self.rate_limit_reset_epoch: float | None = None
 
     def _wait_for_slot(self) -> None:
         elapsed = time.monotonic() - self.last_request_at
         if elapsed < MIN_REQUEST_INTERVAL_SEC:
             time.sleep(MIN_REQUEST_INTERVAL_SEC - elapsed)
+
         if (
             self.rate_limit_remaining is not None
             and self.rate_limit_remaining <= LOW_REMAINING_THRESHOLD
+            and self.rate_limit_remaining > RATE_LIMIT_SAFETY_BUFFER
         ):
             print(
-                f"  Rate limit low ({self.rate_limit_remaining} remaining); "
-                f"sleeping {LOW_REMAINING_SLEEP_SEC}s..."
+                f"  Rate limit getting low ({self.rate_limit_remaining} remaining); "
+                f"pausing {LOW_REMAINING_SLEEP_SEC}s..."
             )
             time.sleep(LOW_REMAINING_SLEEP_SEC)
 
+        if self._should_wait_for_reset():
+            self._wait_until_reset("quota nearly exhausted")
+
+    def _should_wait_for_reset(self) -> bool:
+        if not self.auto_wait:
+            return False
+        if self.rate_limit_remaining is None:
+            return False
+        return self.rate_limit_remaining <= RATE_LIMIT_SAFETY_BUFFER
+
+    def _wait_until_reset(self, reason: str, *, retry_after: int | None = None) -> None:
+        now = time.time()
+        if retry_after is not None and retry_after > 0:
+            wait_sec = min(retry_after + RATE_LIMIT_WAIT_BUFFER_SEC, MAX_RATE_LIMIT_WAIT_SEC)
+            reset_label = f"Retry-After {retry_after}s"
+        elif self.rate_limit_reset_epoch is not None:
+            wait_sec = self.rate_limit_reset_epoch - now + RATE_LIMIT_WAIT_BUFFER_SEC
+            wait_sec = min(max(wait_sec, 0), MAX_RATE_LIMIT_WAIT_SEC)
+            reset_label = datetime.fromtimestamp(
+                self.rate_limit_reset_epoch, tz=timezone.utc
+            ).strftime("%H:%M:%S UTC")
+        else:
+            wait_sec = min(3600, MAX_RATE_LIMIT_WAIT_SEC)
+            reset_label = "~1 hour (reset time unknown)"
+
+        if wait_sec <= 0:
+            return
+
+        self.rate_limit_waits += 1
+        self.rate_limit_wait_seconds += wait_sec
+        print(
+            f"\n  ⏳ Rate limit pause ({reason}): waiting {int(wait_sec)}s until reset "
+            f"({reset_label}). Auto-resume enabled.\n"
+        )
+        self._sleep_with_progress(wait_sec)
+        self.rate_limit_remaining = None
+        self.rate_limit_reset_epoch = None
+
+    def _sleep_with_progress(self, total_sec: float) -> None:
+        remaining = total_sec
+        while remaining > 0:
+            chunk = min(remaining, 60)
+            time.sleep(chunk)
+            remaining -= chunk
+            if remaining > 0:
+                mins, secs = divmod(int(remaining), 60)
+                print(f"  ... still waiting ({mins}m {secs}s left)")
+
     def get_json(self, path: str, *, allow_errors: set[int] | None = None) -> dict:
         allow_errors = allow_errors or set()
-        for attempt in range(3):
+        attempts = 0
+        max_attempts = 6 if self.auto_wait else 3
+        while attempts < max_attempts:
+            attempts += 1
             try:
                 return self._get_json_once(path, allow_errors=allow_errors)
             except HTTPError as exc:
                 if exc.code in allow_errors:
                     return {"content": {}, "error": exc.code, "errorBody": exc.body}
-                if exc.code == 429 and attempt < 2:
-                    wait = 60 * (attempt + 1)
+                if exc.code == 429:
+                    if self.auto_wait and attempts < max_attempts:
+                        retry_after = exc.retry_after
+                        self._wait_until_reset("HTTP 429", retry_after=retry_after)
+                        continue
+                    wait = 60 * min(attempts, 2)
                     print(f"  Rate limited (429); waiting {wait}s before retry...")
                     time.sleep(wait)
                     continue
                 raise
         raise HTTPError(path, 429)
+
+    def _update_rate_limit_headers(self, header_blob: str) -> None:
+        for line in header_blob.splitlines():
+            lower = line.lower()
+            if lower.startswith("x-ratelimit-limit:"):
+                self.rate_limit_limit = _int_header(line.split(":", 1)[1].strip())
+            elif lower.startswith("x-ratelimit-remaining:"):
+                self.rate_limit_remaining = _int_header(line.split(":", 1)[1].strip())
+            elif lower.startswith("x-ratelimit-reset:"):
+                self.rate_limit_reset_epoch = _parse_reset_epoch(
+                    line.split(":", 1)[1].strip()
+                )
+            elif lower.startswith("retry-after:"):
+                # Stored on the client only when handling 429 below.
+                pass
+
+    def _retry_after_from_headers(self, header_blob: str) -> int | None:
+        for line in header_blob.splitlines():
+            if line.lower().startswith("retry-after:"):
+                return _int_header(line.split(":", 1)[1].strip())
+        return None
 
     def _get_json_once(self, path: str, *, allow_errors: set[int]) -> dict:
         self._wait_for_slot()
@@ -129,19 +228,25 @@ class RateLimitedClient:
         parts = status_line.split()
         status_code = int(parts[1]) if len(parts) > 1 else 0
 
-        for line in header_blob.splitlines():
-            lower = line.lower()
-            if lower.startswith("x-ratelimit-remaining:"):
-                self.rate_limit_remaining = _int_header(line.split(":", 1)[1].strip())
+        self._update_rate_limit_headers(header_blob)
 
         self.last_request_at = time.monotonic()
         self.requests_made += 1
         remaining = self.rate_limit_remaining
+        limit = self.rate_limit_limit or RATE_LIMIT_PER_HOUR
         if remaining is not None:
-            print(f"  API request #{self.requests_made} — {remaining} calls remaining this hour")
+            print(
+                f"  API request #{self.requests_made} — {remaining}/{limit} "
+                f"calls remaining this hour"
+            )
 
         if status_code == 429:
-            raise HTTPError(url, 429, body)
+            raise HTTPError(
+                url,
+                429,
+                body,
+                retry_after=self._retry_after_from_headers(header_blob),
+            )
         if status_code in allow_errors:
             return {"content": {}, "error": status_code, "errorBody": body}
         if status_code >= 400:
@@ -157,6 +262,17 @@ def _int_header(value: str | None) -> int | None:
         return int(value)
     except ValueError:
         return None
+
+
+def _parse_reset_epoch(value: str) -> float | None:
+    parsed = _int_header(value)
+    if parsed is None:
+        return None
+    now = time.time()
+    # Unix epoch (e.g. GitHub-style) vs seconds-until-reset (common on APIs).
+    if parsed > 1_000_000_000:
+        return float(parsed)
+    return now + parsed
 
 
 def load_api_key() -> str:

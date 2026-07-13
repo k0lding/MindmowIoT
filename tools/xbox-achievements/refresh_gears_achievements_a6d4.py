@@ -16,6 +16,7 @@ from pathlib import Path
 from xbl_gears_lib import (
     DATA_DIR,
     GAMERTAG_MAPPING,
+    RATE_LIMIT_PER_HOUR,
     RateLimitedClient,
     achievement_output_path,
     build_player_payload,
@@ -63,6 +64,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="List targets only; do not call the API.",
     )
+    parser.add_argument(
+        "--no-auto-wait",
+        action="store_true",
+        help="Do not pause for hourly rate-limit reset (fail/retry on 429 instead).",
+    )
     return parser.parse_args()
 
 
@@ -73,8 +79,8 @@ def target_gamertags(args: argparse.Namespace) -> list[str]:
 
 
 def estimate_requests(count: int, game_count: int) -> int:
-    # /account + per player lookup + ~2 paginated calls per game (player progress + title schema)
-    per_player = max(1, count - 1) + game_count * 2
+    # /account + per-player lookup + ~2 paginated calls per game (player + title schema)
+    per_player = 1 + game_count * 2
     return 1 + count * per_player
 
 
@@ -94,15 +100,25 @@ def main() -> None:
         print(f"  - {gt} ({first}){owner}")
 
     est = estimate_requests(len(gamertags), len(games))
-    print(f"\nEstimated API requests: up to {est} (limit 150/hour)")
-    if est > 140:
-        print("Warning: close to hourly limit. Use --gamertag for partial runs.")
+    windows = max(1, (est + RATE_LIMIT_PER_HOUR - 1) // RATE_LIMIT_PER_HOUR)
+    print(f"\nEstimated API requests: up to {est} (limit {RATE_LIMIT_PER_HOUR}/hour)")
+    if windows > 1:
+        print(
+            f"Full roster may need ~{windows} hourly windows. "
+            "Auto-wait is ON by default — the script will pause and resume when quota resets."
+        )
+    elif est > RATE_LIMIT_PER_HOUR - 10:
+        print("Warning: close to hourly limit.")
 
     if args.dry_run:
         return
 
     api_key = load_api_key()
-    client = RateLimitedClient(api_key)
+    client = RateLimitedClient(api_key, auto_wait=not args.no_auto_wait)
+    if client.auto_wait:
+        print("Rate-limit control: auto-wait for hourly reset is enabled.")
+    else:
+        print("Rate-limit control: auto-wait disabled (--no-auto-wait).")
     summary_players = []
 
     print("\nFetching API owner account...")
@@ -183,6 +199,9 @@ def main() -> None:
             "source": "OpenXBL",
             "playerCount": len(summary_players),
             "apiRequestsUsed": client.requests_made,
+            "rateLimitWaits": client.rate_limit_waits,
+            "rateLimitWaitSeconds": round(client.rate_limit_wait_seconds),
+            "autoWaitEnabled": client.auto_wait,
             "includeGamertags": gamertags,
             "notes": (
                 "Per-player files: data/{Gamertag}_achievements_gearsofwar.json. "
@@ -203,6 +222,12 @@ def main() -> None:
     print(f"\nWrote summary: {summary_path}")
     print(f"Completed: {ok}/{len(summary_players)} players")
     print(f"Total API requests: {client.requests_made}")
+    if client.rate_limit_waits:
+        mins, secs = divmod(int(client.rate_limit_wait_seconds), 60)
+        print(
+            f"Rate-limit pauses: {client.rate_limit_waits} "
+            f"(waited {mins}m {secs}s total for quota reset)"
+        )
 
 
 if __name__ == "__main__":
